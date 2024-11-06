@@ -6,21 +6,28 @@ const SIGNAL_HIDE: StringName = GROUP + &"_hide"
 const SIGNAL_SHOW: StringName = GROUP + &"_show"
 const SIGNAL_FINISHED: StringName = GROUP + &"_finished"
 
-
 const DEBUG_COLOR: Color = Color(1, 0.4118, 0.7059, 0.5)
 
-@export_custom(0, "", PROPERTY_USAGE_EDITOR)
 var visible: bool = true:
 	set(val):
 		visible = val
 		if visible and elapsed == 0.0: return
 		set_process(parent != null)
-		
+
 
 @export_category("Tweening")
-@export var side: Side = SIDE_LEFT:
+@export var custom_target: bool = false:
+	set(val):
+		if custom_target == val: return
+		custom_target = val
+		notify_property_list_changed()
+		
+		
+
+@export_custom(PROPERTY_HINT_ENUM, "Left Side:0,Top Side:1,Right Side:2,Bottom Side:3,Custom Rect:4") var side: Side = SIDE_LEFT:
 	set(val):
 		side = val
+		#if side == 4:
 		axis = side % 2
 		update_pivot()
 		calculate_delta()
@@ -51,6 +58,14 @@ var hide_time_scale: float = 1.5
 
 var parent: Control: set = set_parent
 var rect: ReferenceRect = ReferenceRect.new()
+var target_rect: ReferenceRect:
+	set(val):
+		if target_rect == val: return
+		if target_rect:
+			if not target_rect.is_queued_for_deletion(): target_rect.free()
+			
+		target_rect = val
+		
 
 var screen: Vector2 = Vector2(ProjectSettings["display/window/size/viewport_width"], ProjectSettings["display/window/size/viewport_height"])
 var axis: int = Vector2.AXIS_X
@@ -68,7 +83,7 @@ var delay_sec: float = 0.0
 
 func _init() -> void:
 	set_process(false)
-	set_physics_process(false)
+	#set_physics_process(false)
 	rect.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	rect.border_color = Color(1, 0.4118, 0.7059, 0.5)
 	rect.border_width = 2.0
@@ -138,7 +153,6 @@ func set_elapsed(val: float) -> void:
 
 func set_parent(val: Control) -> void:
 	if parent:
-		#parent.remove_meta(GROUP)
 		for signal_name: StringName in [SIGNAL_HIDE, SIGNAL_SHOW, SIGNAL_FINISHED]:
 			parent.remove_user_signal(signal_name)
 	
@@ -154,6 +168,39 @@ func set_parent(val: Control) -> void:
 	
 	rect.visible = parent != null and debug_rect_visible
 
+
+func _notification(what: int) -> void:
+	match what:
+		NOTIFICATION_PARENTED when get_parent().is_node_ready():
+			set_parent.call_deferred(get_parent())
+		NOTIFICATION_PARENTED when not get_parent().is_node_ready():
+			get_parent().ready.connect(set_parent.bind(get_parent() as Control), CONNECT_DEFERRED | CONNECT_ONE_SHOT)
+		NOTIFICATION_EXIT_TREE:
+			parent = null
+			
+		NOTIFICATION_READY:
+			if not Engine.is_editor_hint():
+				get_window().size_changed.connect(_on_window_size_changed)
+				_on_window_size_changed()
+			
+			
+
+func _on_parent_resize() -> void:
+	calculate_delta()
+
+
+func _on_window_size_changed() -> void:
+	screen = rect.get_viewport_rect().size
+	calculate_delta()
+
+func _validate_property(property: Dictionary) -> void:
+	match property.name:
+		&"visible":
+			property.usage |= PROPERTY_USAGE_EDITOR
+		&"side" when custom_target == false:
+			property.usage |= PROPERTY_USAGE_DEFAULT
+
+#region Setter Helpers
 
 func set_trans(trans_mode: Tween.TransitionType) -> Animator:
 	self.trans_type = trans_mode
@@ -173,39 +220,4 @@ func set_scale(min_scale: float = 0.3, max_scale: float = 1.0, scale_both_axis: 
 	self.scale_both_axis = scale_both_axis
 	return self
 
-
-func _notification(what: int) -> void:
-	match what:
-		NOTIFICATION_PARENTED when get_parent().is_node_ready():
-			set_parent.call_deferred(get_parent())
-		NOTIFICATION_PARENTED when not get_parent().is_node_ready():
-			get_parent().ready.connect(set_parent.bind(get_parent() as Control), CONNECT_DEFERRED | CONNECT_ONE_SHOT)
-		NOTIFICATION_EXIT_TREE:
-			if parent: parent.set_meta(GROUP, null)
-			
-		NOTIFICATION_READY:
-			if not Engine.is_editor_hint():
-				get_window().size_changed.connect(_on_window_size_changed)
-				_on_window_size_changed()
-			
-			else:
-				var selection:= EditorInterface.get_selection()
-				var inspector:= EditorInterface.get_inspector()
-				#inspector.
-				inspector.edited_object_changed.connect(_on_edited_object_changed.bind(inspector, selection))
-
-
-func _on_edited_object_changed(inpsector: EditorInspector, selection: EditorSelection) -> void:
-	if not parent or inpsector.get_edited_object() != self: return
-	selection = EditorInterface.get_selection()
-	selection.add_node(parent)
-	selection.remove_node(self)
-	print("Transformable Nodes: %s" % selection.get_transformable_selected_nodes())
-
-func _on_parent_resize() -> void:
-	calculate_delta()
-
-
-func _on_window_size_changed() -> void:
-	screen = rect.get_viewport_rect().size
-	calculate_delta()
+#endregion
